@@ -457,7 +457,8 @@ describe('RateLimitService', () => {
     expect(service.getState().inactiveCodexAccounts).toEqual([
       {
         accountId: 'account-1',
-        claude: expect.objectContaining({
+        rateLimits: expect.objectContaining({
+          provider: 'codex',
           session: expect.objectContaining({ usedPercent: 33 })
         }),
         updatedAt: expect.any(Number),
@@ -497,7 +498,7 @@ describe('RateLimitService', () => {
     const fetchOnOpen = service.fetchInactiveCodexAccountsOnOpen()
     await Promise.resolve()
     expect(service.getState().inactiveCodexAccounts).toEqual([
-      { accountId: 'account-b', claude: null, updatedAt: 0, isFetching: true }
+      { accountId: 'account-b', rateLimits: null, updatedAt: 0, isFetching: true }
     ])
 
     inactiveAccounts = []
@@ -669,7 +670,7 @@ describe('RateLimitService', () => {
     const fetchOnOpen = service.fetchInactiveClaudeAccountsOnOpen()
     await Promise.resolve()
     expect(service.getState().inactiveClaudeAccounts).toEqual([
-      { accountId: 'account-1', claude: null, updatedAt: 0, isFetching: true }
+      { accountId: 'account-1', rateLimits: null, updatedAt: 0, isFetching: true }
     ])
 
     service.evictInactiveClaudeCache('account-1')
@@ -711,7 +712,8 @@ describe('RateLimitService', () => {
     expect(service.getState().inactiveClaudeAccounts).toEqual([
       {
         accountId: 'account-1',
-        claude: expect.objectContaining({
+        rateLimits: expect.objectContaining({
+          provider: 'claude',
           session: expect.objectContaining({ usedPercent: 7 })
         }),
         updatedAt: expect.any(Number),

@@ -42,8 +42,8 @@ const MIN_REFETCH_MS = 5 * 60 * 1000 // 5 minutes — debounce resume/manual ref
 const STALE_THRESHOLD_MS = 30 * 60 * 1000 // 30 minutes — after this, stale data is dropped
 const INACTIVE_FETCH_DEBOUNCE_MS = 60 * 1000 // 60 seconds — debounce fetch-on-open
 
-// Why: the internal state only tracks claude and codex. The inactiveClaudeAccounts
-// array is derived from the cache on demand in getState() and pushToRenderer().
+// Why: inactive account arrays are derived from provider-specific caches on
+// demand in getState() and pushToRenderer().
 type InternalRateLimitState = {
   claude: ProviderRateLimits | null
   codex: ProviderRateLimits | null
@@ -1024,7 +1024,7 @@ export class RateLimitService {
     for (const [accountId, limits] of cache) {
       result.push({
         accountId,
-        claude: limits,
+        rateLimits: limits,
         updatedAt: limits.updatedAt,
         isFetching: fetching.has(accountId)
       })
@@ -1035,7 +1035,7 @@ export class RateLimitService {
       if (!cache.has(accountId)) {
         result.push({
           accountId,
-          claude: null,
+          rateLimits: null,
           updatedAt: 0,
           isFetching: true
         })
