@@ -25,7 +25,7 @@ import WorktreeCardAgents from './WorktreeCardAgents'
 import { WorktreeCardStatusSlot } from './WorktreeCardStatusSlot'
 import { cn } from '@/lib/utils'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
-import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
+import { isFolderRepo } from '../../../../shared/repo-kind'
 import type { HostedReviewInfo } from '../../../../shared/hosted-review'
 import type {
   GitHubWorkItem,
@@ -700,15 +700,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
                 </TooltipContent>
               </Tooltip>
             )}
-
-            {isFolder ? (
-              <Badge
-                variant="secondary"
-                className="h-[16px] px-1.5 text-[10px] font-medium rounded shrink-0 text-muted-foreground bg-accent border border-border dark:bg-accent/80 dark:border-border/50 leading-none"
-              >
-                {repo ? getRepoKindLabel(repo) : 'Folder'}
-              </Badge>
-            ) : null}
 
             {showInlineRepoBadge && (
               <Tooltip>

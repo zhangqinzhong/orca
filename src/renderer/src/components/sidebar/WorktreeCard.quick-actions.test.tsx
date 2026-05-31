@@ -181,7 +181,7 @@ describe('WorktreeCard quick actions', () => {
     expect(markup).not.toContain('data-worktree-card-meta-row=""')
   })
 
-  it('renders folder kind in the title row without creating a folder-only metadata row', () => {
+  it('omits folder kind from the title row without creating a folder-only metadata row', () => {
     const markup = renderToStaticMarkup(
       <WorktreeCard
         worktree={makeWorktree({ displayName: 'Docs folder', branch: '' })}
@@ -191,8 +191,7 @@ describe('WorktreeCard quick actions', () => {
     )
 
     expect(markup).toContain('Docs folder')
-    expect(markup).toContain('>Folder</span>')
-    expect(markup.indexOf('>Folder</span>')).toBeLessThan(markup.indexOf('Docs folder'))
+    expect(markup).not.toContain('>Folder</span>')
     expect(markup).not.toContain('data-worktree-card-meta-row=""')
   })
 
