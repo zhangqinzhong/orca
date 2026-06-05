@@ -249,8 +249,7 @@ describe('ClaudeUsageStore', () => {
 
     expect(summary.estimatedCostUsd).toBeCloseTo(73.5)
     expect(
-      breakdown.find((row) => row.key === 'anthropic/claude-opus-4-8-20260528')
-        ?.estimatedCostUsd
+      breakdown.find((row) => row.key === 'anthropic/claude-opus-4-8-20260528')?.estimatedCostUsd
     ).toBeCloseTo(36.75)
     expect(
       breakdown.find((row) => row.key === 'claude-opus-4.8-20260528')?.estimatedCostUsd
