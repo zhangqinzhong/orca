@@ -130,6 +130,7 @@ import {
   type ScrollToCurrentWorkspaceRevealRequestDetail
 } from '@/lib/scroll-to-current-workspace-status'
 import { isRepoHeaderActionTarget, useRepoHeaderDrag } from './project-header-drag'
+import { getSidebarOrderedRepoHeaderIdsByBucket } from './project-header-drop'
 import {
   buildManualOrderUpdatesForGroupDrop,
   buildManualOrderUpdatesForVisibleGroups,
@@ -1197,8 +1198,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   )
   const suppressWorktreeClickUntilRef = useRef(0)
   const hasProjectGroups = projectGroups.length > 0
-  const canReorderRepoHeaders =
-    groupBy === 'repo' && projectOrderBy === 'manual' && !hasProjectGroups
+  const canReorderRepoHeaders = groupBy === 'repo' && projectOrderBy === 'manual'
+  const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
   const lastVisibleRefreshKeyRef = useRef('')
   const reportVisibleGitHubPRRefreshCandidates = useAppStore(
     (s) => s.reportVisibleGitHubPRRefreshCandidates
@@ -1242,13 +1243,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     },
     [reorderRepos]
   )
-  // Drag is only meaningful when repo headers are using manual order. The
-  // controller is still constructed for hook order stability when inert.
-  const repoDrag = useRepoHeaderDrag({
-    orderedRepoIds: allRepoIds,
-    onCommit: commitRepoReorder,
-    getScrollContainer: () => scrollRef.current
-  })
   const orderedHostIds = useMemo(
     () =>
       rows
@@ -1375,6 +1369,48 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     [computeWorktreeDropForGroup]
   )
   const renderRows = useMemo(() => buildRenderableRows(rows), [rows])
+  const sidebarRepoHeaderIdsByBucket = useMemo(
+    () =>
+      getSidebarOrderedRepoHeaderIdsByBucket(
+        rows.filter((row): row is Row => row.type !== 'host-header')
+      ),
+    [rows]
+  )
+  const repoHeaderIndexByRepoId = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const repoIds of sidebarRepoHeaderIdsByBucket.values()) {
+      repoIds.forEach((repoId, index) => {
+        map.set(repoId, index)
+      })
+    }
+    return map
+  }, [sidebarRepoHeaderIdsByBucket])
+  const repoHeaderBucketByRepoId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const [bucketKey, repoIds] of sidebarRepoHeaderIdsByBucket) {
+      for (const repoId of repoIds) {
+        map.set(repoId, bucketKey)
+      }
+    }
+    return map
+  }, [sidebarRepoHeaderIdsByBucket])
+  const commitProjectGroupOrder = useCallback(
+    (repoId: string, projectGroupId: string | null, order: number) => {
+      void moveProjectToGroup(repoId, projectGroupId, order)
+    },
+    [moveProjectToGroup]
+  )
+  // Drag is only meaningful when repo headers are using manual order. The
+  // controller is still constructed for hook order stability when inert.
+  const repoDrag = useRepoHeaderDrag({
+    orderedRepoIds: allRepoIds,
+    sidebarRepoHeaderIdsByBucket,
+    repoById: repoMap,
+    usesProjectGroupOrdering: hasProjectGroups,
+    onCommitRepoOrder: commitRepoReorder,
+    onCommitProjectGroupOrder: commitProjectGroupOrder,
+    getScrollContainer: () => scrollRef.current
+  })
   const [primaryActiveWorktreeRow, setPrimaryActiveWorktreeRow] = useState<{
     worktreeId: string
     rowKey: string
@@ -3585,6 +3621,21 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               const isRepoHeader = groupBy === 'repo' && row.repo !== undefined
               const isProjectGroupHeader = groupBy === 'repo' && row.projectGroup !== undefined
               const projectIdForHeader = isRepoHeader ? row.repo!.id : undefined
+              const repoHeaderIndex =
+                projectIdForHeader !== undefined
+                  ? repoHeaderIndexByRepoId.get(projectIdForHeader)
+                  : undefined
+              const repoHeaderBucketKey =
+                projectIdForHeader !== undefined
+                  ? repoHeaderBucketByRepoId.get(projectIdForHeader)
+                  : undefined
+              const isDraggableRepoHeader = Boolean(
+                canReorderRepoHeaders &&
+                isRepoHeader &&
+                projectIdForHeader &&
+                repoHeaderBucketKey &&
+                (sidebarRepoHeaderIdsByBucket.get(repoHeaderBucketKey)?.length ?? 0) > 1
+              )
               const isDraggingThis =
                 canReorderRepoHeaders &&
                 repoDrag.state.draggingRepoId !== null &&
@@ -3640,6 +3691,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   role="presentation"
                   data-worktree-virtual-row
                   data-worktree-virtual-row-key={String(vItem.key)}
+                  data-worktree-virtual-row-start={vItem.start}
                   data-worktree-sticky-header=""
                   data-worktree-sticky-header-active={isActiveStickyHeader ? '' : undefined}
                   data-index={vItem.index}
@@ -3667,6 +3719,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     tabIndex={0}
                     aria-expanded={showHeaderCollapseAffordance ? !isHeaderCollapsed : undefined}
                     data-repo-header-id={projectIdForHeader}
+                    data-repo-header-index={repoHeaderIndex}
+                    data-repo-header-bucket={repoHeaderBucketKey}
                     data-workspace-status-drop-target={headerWorkspaceStatus ? '' : undefined}
                     data-workspace-status={headerWorkspaceStatus ?? undefined}
                     data-workspace-pin-drop-target={isPinnedHeader ? '' : undefined}
@@ -3684,16 +3738,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                       row.repo && 'overflow-hidden'
                     )}
                     style={{ paddingLeft: headerPaddingLeft }}
-                    // Why: arm project-header drag from anywhere on the row, not
-                    // just the icon — users grab the name to reorder. The hook
-                    // ignores presses on nested buttons (+/chevron) and only
-                    // promotes to a drag past a 4px threshold, so a plain click
-                    // still toggles collapse via onClick.
-                    onPointerDown={
-                      canReorderRepoHeaders && isRepoHeader && projectIdForHeader
-                        ? (e) => repoDrag.onHandlePointerDown(e, projectIdForHeader)
-                        : undefined
-                    }
                     onDragOver={
                       isPinnedHeader
                         ? handleWorkspacePinDragOver
@@ -3731,10 +3775,17 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   >
                     {row.icon ? (
                       <div
+                        data-repo-header-drag-handle={isDraggableRepoHeader ? '' : undefined}
                         className={cn(
                           'flex size-4 shrink-0 items-center justify-center rounded-[4px]',
-                          repoHeaderColor ? 'text-muted-foreground' : row.tone
+                          repoHeaderColor ? 'text-muted-foreground' : row.tone,
+                          isDraggableRepoHeader && 'hover:cursor-grab active:cursor-grabbing'
                         )}
+                        onPointerDown={
+                          isDraggableRepoHeader && projectIdForHeader
+                            ? (event) => repoDrag.onHandlePointerDown(event, projectIdForHeader)
+                            : undefined
+                        }
                       >
                         {row.repo ? (
                           <RepoIconGlyph

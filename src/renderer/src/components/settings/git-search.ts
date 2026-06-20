@@ -54,7 +54,10 @@ export const getGitPaneSearchEntries = createLocalizedCatalog(() => [
     ),
     keywords: [
       ...translateSearchKeyword('auto.components.settings.git.search.groupOrder', 'group order'),
-      ...translateSearchKeyword('auto.components.settings.git.search.changesFirst', 'changes first'),
+      ...translateSearchKeyword(
+        'auto.components.settings.git.search.changesFirst',
+        'changes first'
+      ),
       ...translateSearchKeyword('auto.components.settings.git.search.stagedFirst', 'staged first'),
       ...translateSearchKeyword(
         'auto.components.settings.git.search.untrackedFirst',
