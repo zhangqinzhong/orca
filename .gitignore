@@ -95,7 +95,7 @@ validation-screenshots/
 
 # PR verification evidence screenshots are referenced from notes but should not
 # be committed.
-notes/artifacts/
+notes/
 
 # Playwright
 test-results/
