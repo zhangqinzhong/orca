@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import { Card } from '@/components/ui/card'
 import { Send } from 'lucide-react'
 
@@ -9,8 +8,8 @@ type ChatMsg =
   | { type: 'assistant'; text: string; messageId: string }
   | { type: 'tool_use'; name: string; input: unknown; messageId: string }
   | { type: 'tool_result'; content: string; messageId: string }
-  | { type: 'error'; text: string }
-  | { type: 'done' }
+  | { type: 'error'; text: string; messageId: string }
+  | { type: 'done'; messageId: string }
 
 export function AgentChatPanel(): React.JSX.Element {
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -19,19 +18,18 @@ export function AgentChatPanel(): React.JSX.Element {
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionIdRef = useRef(crypto.randomUUID())
 
-  // Listen for incoming messages from Claude
   useEffect(() => {
     const cleanup = window.api.agentChat.onMessage(
-      (data: { sessionId: string; message: ChatMsg }) => {
+      (data: { sessionId: string; message: unknown }) => {
+        const msg = data.message as ChatMsg
         setMessages((prev) => {
-          // avoid duplicate done messages
-          if (data.message.type === 'done' && prev.some((m) => m.type === 'done')) {
+          if (msg.type === 'done' && prev.some((m) => m.type === 'done')) {
             return prev
           }
-          return [...prev, data.message]
+          return [...prev, msg]
         })
 
-        if (data.message.type === 'done') {
+        if (msg.type === 'done') {
           setRunning(false)
         }
       }
@@ -39,7 +37,6 @@ export function AgentChatPanel(): React.JSX.Element {
     return cleanup
   }, [])
 
-  // Scroll to bottom on new message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -50,8 +47,7 @@ export function AgentChatPanel(): React.JSX.Element {
       return
     }
 
-    const userMsg: ChatMsg = { type: 'user', text, messageId: crypto.randomUUID() }
-    setMessages((prev) => [...prev, userMsg])
+    setMessages((prev) => [...prev, { type: 'user', text, messageId: crypto.randomUUID() }])
     setInput('')
     setRunning(true)
 
@@ -65,7 +61,11 @@ export function AgentChatPanel(): React.JSX.Element {
     } catch (err) {
       setMessages((prev) => [
         ...prev,
-        { type: 'error', text: err instanceof Error ? err.message : String(err) }
+        {
+          type: 'error',
+          text: err instanceof Error ? err.message : String(err),
+          messageId: crypto.randomUUID()
+        }
       ])
       setRunning(false)
     }
@@ -83,7 +83,6 @@ export function AgentChatPanel(): React.JSX.Element {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
           <p className="text-muted-foreground text-sm text-center mt-8">
@@ -91,8 +90,8 @@ export function AgentChatPanel(): React.JSX.Element {
           </p>
         )}
 
-        {messages.map((msg, i) => (
-          <ChatBubble key={`${msg.messageId}-${i}`} msg={msg} />
+        {messages.map((msg) => (
+          <ChatBubble key={msg.messageId} msg={msg} />
         ))}
 
         {running && (
@@ -102,15 +101,14 @@ export function AgentChatPanel(): React.JSX.Element {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
       <div className="border-t border-border p-3">
         <div className="flex gap-2">
-          <Textarea
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Send a message..."
-            className="min-h-[40px] max-h-[120px] resize-none"
+            className="flex-1 min-h-[40px] max-h-[120px] resize-none rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             disabled={running}
             rows={1}
           />
@@ -152,7 +150,7 @@ function ChatBubble({ msg }: { msg: ChatMsg }): React.JSX.Element {
       return (
         <div className="flex justify-start">
           <Card className="max-w-[80%] px-3 py-2 bg-muted rounded-lg border-l-2 border-blue-400">
-            <p className="text-xs text-muted-foreground font-mono">🔧 {msg.name}</p>
+            <p className="text-xs text-muted-foreground font-mono">&#x1f527; {msg.name}</p>
             <p className="text-xs text-muted-foreground font-mono truncate">
               {JSON.stringify(msg.input)}
             </p>
@@ -175,6 +173,10 @@ function ChatBubble({ msg }: { msg: ChatMsg }): React.JSX.Element {
       )
 
     default:
-      return null
+      return (
+        <div className="flex justify-center">
+          <p className="text-xs text-muted-foreground">{msg.type}</p>
+        </div>
+      )
   }
 }
