@@ -88,6 +88,7 @@
     "bench:compare": "node config/scripts/compare-benchmark-artifacts.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.185",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@floating-ui/dom": "1.7.6",

@@ -3927,6 +3927,24 @@ const api = {
       ipcRenderer.on('speech:error', listener)
       return () => ipcRenderer.removeListener('speech:error', listener)
     }
+  },
+  agentChat: {
+    start: (args: { sessionId: string; message: string; cwd: string }): Promise<void> =>
+      ipcRenderer.invoke('agent:chat:start', args),
+    continue: (args: { sessionId: string; message: string; cwd: string }): Promise<void> =>
+      ipcRenderer.invoke('agent:chat:continue', args),
+    stop: (args: { sessionId: string }): Promise<void> =>
+      ipcRenderer.invoke('agent:chat:stop', args),
+    onMessage: (
+      callback: (data: { sessionId: string; message: unknown }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; message: unknown }
+      ): void => callback(data)
+      ipcRenderer.on('agent:chat:message', listener)
+      return () => ipcRenderer.removeListener('agent:chat:message', listener)
+    }
   }
 }
 

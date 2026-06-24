@@ -1,3 +1,4 @@
+import { registerAgentChatHandlers } from './agent-chat'
 import { registerAppHandlers } from './app'
 import { registerCliHandlers } from './cli'
 import { registerPreflightHandlers } from './preflight'
@@ -111,6 +112,7 @@ export function registerCoreHandlers(
   registerOpenCodeUsageHandlers(openCodeUsage)
   registerCodexAccountHandlers(codexAccounts)
   registerAgentHookHandlers(runtime)
+  registerAgentChatHandlers()
   registerAgentTrustHandlers()
   registerClaudeAccountHandlers(claudeAccounts)
   registerRateLimitHandlers(rateLimits)

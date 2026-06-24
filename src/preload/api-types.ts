@@ -2761,6 +2761,12 @@ export type PreloadApi = {
     onStopped: (callback: (data: SpeechLifecycleEvent) => void) => () => void
     onError: (callback: (data: SpeechErrorEvent) => void) => () => void
   }
+  agentChat: {
+    start: (args: { sessionId: string; message: string; cwd: string }) => Promise<void>
+    continue: (args: { sessionId: string; message: string; cwd: string }) => Promise<void>
+    stop: (args: { sessionId: string }) => Promise<void>
+    onMessage: (callback: (data: { sessionId: string; message: unknown }) => void) => () => void
+  }
 }
 
 declare global {
