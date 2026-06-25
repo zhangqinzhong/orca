@@ -11,7 +11,7 @@ type ChatMsg =
   | { type: 'error'; text: string; messageId: string }
   | { type: 'done'; messageId: string }
 
-export function AgentChatPanel(): React.JSX.Element {
+export default function AgentChatPanel(): React.JSX.Element {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)

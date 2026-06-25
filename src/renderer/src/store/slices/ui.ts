@@ -553,6 +553,8 @@ export type UISlice = {
     | 'space'
     | 'skills'
     | 'mobile'
+    | 'agent-chat'
+    | 'agent-chat'
   previousViewBeforeTasks:
     | 'terminal'
     | 'settings'
@@ -561,6 +563,8 @@ export type UISlice = {
     | 'space'
     | 'skills'
     | 'mobile'
+    | 'agent-chat'
+    | 'agent-chat'
   previousViewBeforeSettings:
     | 'terminal'
     | 'tasks'
@@ -568,6 +572,9 @@ export type UISlice = {
     | 'automations'
     | 'space'
     | 'skills'
+    | 'mobile'
+    | 'agent-chat'
+    | 'agent-chat'
     | 'mobile'
   previousViewBeforeActivity:
     | 'terminal'
@@ -577,6 +584,7 @@ export type UISlice = {
     | 'space'
     | 'skills'
     | 'mobile'
+    | 'agent-chat'
   previousViewBeforeAutomations:
     | 'terminal'
     | 'settings'
@@ -585,6 +593,7 @@ export type UISlice = {
     | 'space'
     | 'skills'
     | 'mobile'
+    | 'agent-chat'
   previousViewBeforeSpace:
     | 'terminal'
     | 'settings'
@@ -593,6 +602,7 @@ export type UISlice = {
     | 'automations'
     | 'skills'
     | 'mobile'
+    | 'agent-chat'
   previousViewBeforeSkills:
     | 'terminal'
     | 'settings'
@@ -1394,21 +1404,27 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       activeView: state.previousViewBeforeSpace
     })),
   openSkillsPage: () =>
-    set((state) => ({
-      activeView: 'skills',
-      previousViewBeforeSkills:
-        state.activeView === 'skills' ? state.previousViewBeforeSkills : state.activeView
-    })),
+    set(
+      (state) =>
+        ({
+          activeView: 'skills' as const,
+          previousViewBeforeSkills:
+            state.activeView === 'skills' ? state.previousViewBeforeSkills : state.activeView
+        }) as Partial<AppState>
+    ),
   closeSkillsPage: () =>
     set((state) => ({
       activeView: state.previousViewBeforeSkills
     })),
   openMobilePage: () =>
-    set((state) => ({
-      activeView: 'mobile',
-      previousViewBeforeMobile:
-        state.activeView === 'mobile' ? state.previousViewBeforeMobile : state.activeView
-    })),
+    set(
+      (state) =>
+        ({
+          activeView: 'mobile' as const,
+          previousViewBeforeMobile:
+            state.activeView === 'mobile' ? state.previousViewBeforeMobile : state.activeView
+        }) as Partial<AppState>
+    ),
   closeMobilePage: () =>
     set((state) => ({
       activeView: state.previousViewBeforeMobile

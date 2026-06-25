@@ -12,6 +12,7 @@ export function resolveZoomTarget(args: {
     | 'space'
     | 'skills'
     | 'mobile'
+    | 'agent-chat'
   activeTabType: 'terminal' | 'editor' | 'browser' | 'simulator'
   activeBrowserPageId?: string | null
   activeElement: unknown

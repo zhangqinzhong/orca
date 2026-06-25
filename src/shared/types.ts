@@ -756,6 +756,7 @@ export type TabContentType =
   | 'check-details'
   | 'browser'
   | 'simulator'
+  | 'agent-chat'
 
 export type WorkspaceVisibleTabType = 'terminal' | 'editor' | 'browser' | 'simulator'
 export type CtrlTabOrderMode = 'mru' | 'sequential'
