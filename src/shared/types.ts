@@ -2056,6 +2056,8 @@ export type CreateWorktreeResult = {
     spawned: boolean
     handle?: string
     tabId?: string
+    paneKey?: string | null
+    ptyId?: string | null
     surface?: 'visible' | 'background'
   }
   timing?: WorktreeCreateTiming
