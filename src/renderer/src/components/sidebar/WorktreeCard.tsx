@@ -47,7 +47,10 @@ import {
 } from './WorktreeCardMeta'
 import { WorktreeCardPortsDetails, WorktreeCardPortsTrigger } from './WorktreeCardPorts'
 import { writeWorkspaceDragData } from './workspace-status'
-import { getWorktreeCardPrDisplay } from './worktree-card-pr-display'
+import {
+  getWorktreeCardPrDisplay,
+  isCachedMergedBranchPRCurrentForWorktree
+} from './worktree-card-pr-display'
 import type { WorktreeCardPrDisplay } from './worktree-card-pr-display'
 import {
   coerceWorktreeCardVisibleTitle,
@@ -77,7 +80,7 @@ import {
 import { translate } from '@/i18n/i18n'
 import { recordRendererCrashBreadcrumb } from '@/lib/crash-diagnostics'
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
-import { parseExecutionHostId } from '../../../../shared/execution-host'
+import { isRuntimeOwnedSshTargetId, parseExecutionHostId } from '../../../../shared/execution-host'
 import { DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE } from '../../../../shared/constants'
 
 type WorktreeRenameRequest = {
@@ -329,7 +332,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
 
   // SSH disconnected state
   const sshStatus = useAppStore((s) => {
-    if (!repo?.connectionId) {
+    // Why: runtime-owned (per-workspace-env) SSH targets are hidden and their relay health is
+    // owned by the runtime layer — Orca suppresses their ssh:state-changed broadcasts, so their
+    // state is absent here. Don't show a false "disconnected" SSH chip for them.
+    if (!repo?.connectionId || isRuntimeOwnedSshTargetId(repo.connectionId)) {
       return null
     }
     const state = s.sshConnectionStates.get(repo.connectionId)
@@ -397,7 +403,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
           settings,
           repo.id,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   const prCacheKey =
@@ -408,7 +415,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
           branch,
           settings,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   const issueCacheKey =
@@ -419,7 +427,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
           worktree.linkedIssue,
           settings,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   // Why: use 'all' to fetch from all Linear workspaces. The issue might belong
@@ -459,17 +468,40 @@ const WorktreeCard = React.memo(function WorktreeCard({
     linkedGiteaPR !== null
   // Why: ChecksPanel can discover a branch PR before hosted-review metadata
   // warms, and transient older hosted-review misses can race with that cache.
-  // Newer hosted-review misses still win so stale PR cache cannot resurrect.
+  // A newer miss only yields to merged PR cache when the stored worktree head
+  // proves the cached PR still describes the checked-out commit.
   const cachedBranchPR = prCacheEntry?.data
   const cachedBranchPRFetchedAt = prCacheEntry?.fetchedAt
+  const cachedMergedBranchPRMatchesCurrentHead = isCachedMergedBranchPRCurrentForWorktree(
+    cachedBranchPR,
+    worktree
+  )
+  const cachedBranchFallbackGitHubPRNumber =
+    linkedGitHubPR === null &&
+    !hasNonGitHubLinkedReview &&
+    cachedBranchPR?.number !== undefined &&
+    (cachedBranchPR.state !== 'merged' || cachedMergedBranchPRMatchesCurrentHead)
+      ? cachedBranchPR.number
+      : null
+  const cachedBranchPRCanDriveDisplay =
+    cachedBranchPR?.state !== 'merged' || cachedMergedBranchPRMatchesCurrentHead
+  const hostedReviewMatchesHeadMatchedCachedMergedPR =
+    cachedMergedBranchPRMatchesCurrentHead &&
+    cachedBranchPR !== null &&
+    cachedBranchPR !== undefined &&
+    hostedReview?.provider === 'github' &&
+    hostedReview.number === cachedBranchPR.number
   const useCachedBranchReview =
     cachedBranchPR !== undefined &&
     cachedBranchPR !== null &&
     !hasNonGitHubLinkedReview &&
+    cachedBranchPRCanDriveDisplay &&
     (hostedReview === undefined ||
+      (cachedMergedBranchPRMatchesCurrentHead && !hostedReviewMatchesHeadMatchedCachedMergedPR) ||
       (hostedReview === null &&
-        cachedBranchPRFetchedAt !== undefined &&
-        cachedBranchPRFetchedAt > (hostedReviewEntry?.fetchedAt ?? 0)))
+        ((cachedBranchPRFetchedAt !== undefined &&
+          cachedBranchPRFetchedAt > (hostedReviewEntry?.fetchedAt ?? 0)) ||
+          cachedMergedBranchPRMatchesCurrentHead)))
   const cachedBranchReview = useCachedBranchReview
     ? hostedReviewInfoFromGitHubPRInfo(cachedBranchPR)
     : hostedReview
@@ -482,7 +514,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
     linkedGiteaPR,
     {
       reviewHintKey:
-        useCachedBranchReview && !hasLinkedReview ? '' : hostedReviewEntry?.linkedReviewHintKey
+        (useCachedBranchReview || cachedMergedBranchPRMatchesCurrentHead) && !hasLinkedReview
+          ? ''
+          : hostedReviewEntry?.linkedReviewHintKey
     }
   )
   const issue: IssueInfo | null | undefined = worktree.linkedIssue
@@ -612,6 +646,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
       void fetchHostedReviewForBranch(repo.path, branch, {
         repoId: repo.id,
         linkedGitHubPR: worktree.linkedPR ?? null,
+        ...(cachedBranchFallbackGitHubPRNumber !== null
+          ? { fallbackGitHubPR: cachedBranchFallbackGitHubPRNumber }
+          : {}),
+        currentHeadOid: worktree.head ?? null,
         linkedGitLabMR,
         linkedBitbucketPR,
         linkedAzureDevOpsPR,
@@ -630,6 +668,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
     isFolder,
     worktree.isBare,
     worktree.linkedPR,
+    worktree.head,
+    cachedBranchFallbackGitHubPRNumber,
     linkedGitLabMR,
     linkedBitbucketPR,
     linkedAzureDevOpsPR,
@@ -659,6 +699,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
     void fetchHostedReviewForBranch(repo.path, branch, {
       repoId: repo.id,
       linkedGitHubPR: worktree.linkedPR ?? null,
+      ...(cachedBranchFallbackGitHubPRNumber !== null
+        ? { fallbackGitHubPR: cachedBranchFallbackGitHubPRNumber }
+        : {}),
+      currentHeadOid: worktree.head ?? null,
       linkedGitLabMR,
       linkedBitbucketPR,
       linkedAzureDevOpsPR,
@@ -673,6 +717,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
     isFolder,
     worktree.isBare,
     worktree.linkedPR,
+    worktree.head,
+    cachedBranchFallbackGitHubPRNumber,
     linkedGitLabMR,
     linkedBitbucketPR,
     linkedAzureDevOpsPR,
@@ -815,7 +861,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
         sshDisconnected: isSshDisconnected
       })
       onImmediateActivate?.(worktree.id, activationRowKey)
-      activateWorktreeFromSidebar(worktree.id)
+      void activateWorktreeFromSidebar(worktree.id)
       if (isSshDisconnected) {
         setShowDisconnectedDialog(true)
       }
@@ -1758,11 +1804,13 @@ const WorktreeCard = React.memo(function WorktreeCard({
         automationHostId={worktree.hostId}
         branchName={hoverBranchName}
         workspaceTitle={hoverWorkspaceTitle}
+        workspaceTitleRenameDisabled={isDeleting || affiliateListMode}
         detailsAfter={
           workspacePorts.length > 0 ? <WorktreeCardPortsDetails ports={workspacePorts} /> : null
         }
         openDelay={100}
         hoverControl={detailsHoverControl}
+        onRenameWorkspaceTitle={affiliateListMode ? undefined : handleRenameTitle}
         onEditIssue={affiliateListMode ? undefined : handleEditIssue}
         onEditComment={affiliateListMode ? undefined : handleEditComment}
         onOpenGitHubIssueInOrca={
@@ -1852,7 +1900,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
       ) : (
         <WorktreeContextMenu
           worktree={worktree}
-          newCardStyle={newCardStyle}
           selectedWorktrees={selectedWorktrees}
           onContextMenuSelect={handleContextMenuSelect}
         >

@@ -22,6 +22,7 @@ import {
 } from '@/store/slices/github'
 import { getGitHubPRCacheKey, getGitHubRepoCacheKey } from '@/store/slices/github-cache-key'
 import { useActiveWorktree, useRepoById } from '@/store/selectors'
+import { useChecksPanelTerminalWorktree } from './use-checks-panel-terminal-worktree'
 import { cn } from '@/lib/utils'
 import { openHttpLink } from '@/lib/http-link-routing'
 import { Button } from '@/components/ui/button'
@@ -81,7 +82,7 @@ import { normalizeHostedReviewHeadRef } from '../../../../shared/hosted-review-r
 import { getHostedReviewCacheKey, refreshHostedReviewCard } from '@/store/slices/hosted-review'
 import { toast } from 'sonner'
 import { useConfirmationDialog } from '@/components/confirmation-dialog'
-import { type ChecksPanelReview, gitHubPRToChecksPanelReview } from './checks-panel-review'
+import { type ChecksPanelReview, selectChecksPanelReview } from './checks-panel-review'
 import {
   checksPanelAsyncResultKey,
   checksPanelHostedReviewAsyncResultKey,
@@ -110,6 +111,8 @@ import {
   buildChecksPanelGitStatusContextKey,
   readChecksPanelPublishActionGitStatus,
   readChecksPanelGitStatusSnapshot,
+  readChecksPanelRefreshGitIdentitySnapshot,
+  hasChecksPanelGitStatusBranchChanged,
   shouldClearChecksPanelGitStatusSnapshot,
   shouldCoalesceChecksPanelGitStatusSnapshotRefresh,
   shouldCommitChecksPanelGitStatusSnapshot,
@@ -131,9 +134,9 @@ import {
   resolveSourceControlAiPrCreationDefaults
 } from '../../../../shared/source-control-ai'
 import { getCommitMessageModelDiscoveryHostKeyForScope } from '../../../../shared/commit-message-host-key'
-import {
-  type SourceControlActionRecipe,
-  type SourceControlLaunchActionId
+import type {
+  SourceControlActionRecipe,
+  SourceControlLaunchActionId
 } from '../../../../shared/source-control-ai-actions'
 import {
   saveSourceControlActionRecipe,
@@ -364,8 +367,22 @@ async function resolveGitLabMRDiscussionForChecks(args: {
 }
 
 export default function ChecksPanel(): React.JSX.Element {
-  const activeWorktree = useActiveWorktree()
-  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
+  // Why: the sidebar stays mounted when closed (for performance). Gate
+  // polling on visibility so we don't fetch checks/comments — or poll the
+  // terminal cwd — in the background when the panel isn't visible.
+  const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
+  const rightSidebarTab = useAppStore((s) => s.rightSidebarTab)
+  const isPanelVisible = rightSidebarOpen && rightSidebarTab === 'checks'
+
+  // Follow the active terminal's cwd so linked-PR/checks state tracks the
+  // worktree the terminal is actually operating in (e.g. across a stack),
+  // falling back to the sidebar's selected worktree.
+  const defaultActiveWorktree = useActiveWorktree()
+  const { worktree: activeWorktree } = useChecksPanelTerminalWorktree({
+    defaultActiveWorktree,
+    isPanelVisible
+  })
+  const activeWorktreeId = activeWorktree?.id ?? null
   const repo = useRepoById(activeWorktree?.repoId ?? null)
   const activeConnectionId = activeWorktreeId
     ? (getConnectionId(activeWorktreeId) ?? repo?.connectionId ?? null)
@@ -397,14 +414,8 @@ export default function ChecksPanel(): React.JSX.Element {
   const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen)
   const setRightSidebarTab = useAppStore((s) => s.setRightSidebarTab)
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
+  const updateWorktreeGitIdentity = useAppStore((s) => s.updateWorktreeGitIdentity)
   const openModal = useAppStore((s) => s.openModal)
-
-  // Why: the sidebar stays mounted when closed (for performance). Gate
-  // polling on visibility so we don't fetch checks/comments in the background
-  // when the panel isn't visible to the user.
-  const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
-  const rightSidebarTab = useAppStore((s) => s.rightSidebarTab)
-  const isPanelVisible = rightSidebarOpen && rightSidebarTab === 'checks'
 
   const fetchPRChecks = useAppStore((s) => s.fetchPRChecks)
   const fetchPRCheckDetails = useAppStore((s) => s.fetchPRCheckDetails)
@@ -426,6 +437,7 @@ export default function ChecksPanel(): React.JSX.Element {
   const commentsRef = useRef<PRComment[]>([])
   const [emptyRefreshing, setEmptyRefreshing] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const refreshInFlightRef = useRef(false)
   const [conflictDetailsRefreshing, setConflictDetailsRefreshing] = useState(false)
   const createPrInFlightRef = useRef<string | null>(null)
   const [isCreatingPr, setIsCreatingPr] = useState(false)
@@ -590,6 +602,7 @@ export default function ChecksPanel(): React.JSX.Element {
     pollIntervalRef.current = 30_000
     prevChecksRef.current = ''
     conflictSummaryRefreshKeyRef.current = null
+    refreshInFlightRef.current = false
     refreshRequestKeyRef.current = null
     if (gitStatusSnapshotRetryTimerRef.current) {
       clearTimeout(gitStatusSnapshotRetryTimerRef.current)
@@ -607,7 +620,8 @@ export default function ChecksPanel(): React.JSX.Element {
           branch,
           settings,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   const hostedReviewCacheKey =
@@ -618,7 +632,8 @@ export default function ChecksPanel(): React.JSX.Element {
           settings,
           repo.id,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   const refreshContextKey = `${activeWorktreeId ?? ''}::${prCacheKey}::${branch}`
@@ -645,10 +660,14 @@ export default function ChecksPanel(): React.JSX.Element {
   const linkedBitbucketPR = activeWorktree?.linkedBitbucketPR ?? null
   const linkedAzureDevOpsPR = activeWorktree?.linkedAzureDevOpsPR ?? null
   const linkedGiteaPR = activeWorktree?.linkedGiteaPR ?? null
-  const gitLabHostedReview = hostedReview?.provider === 'gitlab' ? hostedReview : null
-  const activeReview: ChecksPanelReview | null =
-    gitLabHostedReview ??
-    (linkedGitLabMR !== null ? null : pr ? gitHubPRToChecksPanelReview(pr) : null)
+  const activeReview: ChecksPanelReview | null = selectChecksPanelReview({
+    hostedReview,
+    pr,
+    linkedGitLabMR,
+    linkedBitbucketPR,
+    linkedAzureDevOpsPR,
+    linkedGiteaPR
+  })
   const activeGitLabReview = isGitLabChecksPanelReview(activeReview) ? activeReview : null
   const isGitLabReviewContext = Boolean(activeGitLabReview || linkedGitLabMR !== null)
   const activeConflictReview = activeReview?.mergeable === 'CONFLICTING' ? activeReview : null
@@ -722,7 +741,8 @@ export default function ChecksPanel(): React.JSX.Element {
           prChecksCacheSuffix(prNumber, pr?.prRepo),
           settings,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   const commentsCacheKey =
@@ -733,7 +753,8 @@ export default function ChecksPanel(): React.JSX.Element {
           prCommentsCacheSuffix(prNumber, pr?.prRepo),
           settings,
           repo.connectionId,
-          repo.executionHostId
+          repo.executionHostId,
+          true
         )
       : ''
   const checksFetchedAt = useAppStore((s) =>
@@ -1183,6 +1204,7 @@ export default function ChecksPanel(): React.JSX.Element {
         repoId: repo.id,
         linkedGitHubPR: linkedPR,
         fallbackGitHubPR: fallbackGitHubPRNumber,
+        currentHeadOid: activeWorktree?.head ?? null,
         linkedGitLabMR,
         linkedBitbucketPR,
         linkedAzureDevOpsPR,
@@ -1202,6 +1224,7 @@ export default function ChecksPanel(): React.JSX.Element {
     isFolder,
     isGitLabReviewContext,
     isPanelVisible,
+    activeWorktree?.head,
     linkedAzureDevOpsPR,
     linkedBitbucketPR,
     linkedGiteaPR,
@@ -1293,6 +1316,17 @@ export default function ChecksPanel(): React.JSX.Element {
     }
     void (async () => {
       const status = await getRuntimeGitStatus(context)
+      if (
+        !stale &&
+        shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, requestContextKey)
+      ) {
+        // Why: the Checks tab can be the only visible git surface; commit
+        // branch identity before branch-scoped upstream refresh can fail.
+        updateWorktreeGitIdentity(activeWorktreeId, {
+          head: status.head,
+          branch: status.branch ?? (status.head ? null : undefined)
+        })
+      }
       let freshRemoteStatus = status.upstreamStatus
       if (activeWorktreePushTarget) {
         freshRemoteStatus = await getRuntimeGitUpstreamStatus(context, activeWorktreePushTarget)
@@ -1314,7 +1348,11 @@ export default function ChecksPanel(): React.JSX.Element {
           setGitStatusSnapshot({
             contextKey: requestContextKey,
             hasUncommittedChanges: status.entries.length > 0,
-            remoteStatus
+            remoteStatus,
+            gitIdentity: {
+              head: status.head,
+              branch: status.branch ?? (status.head ? null : undefined)
+            }
           })
         }
       })
@@ -1375,7 +1413,8 @@ export default function ChecksPanel(): React.JSX.Element {
     repoConnectionId,
     remoteStatusInvalidation,
     runtimeEnvironmentId,
-    sshConnectionStatus
+    sshConnectionStatus,
+    updateWorktreeGitIdentity
   ])
 
   useEffect(() => {
@@ -1829,6 +1868,12 @@ export default function ChecksPanel(): React.JSX.Element {
     if (!repo || !branch) {
       return
     }
+    if (refreshInFlightRef.current) {
+      return
+    }
+    // Why: React has not disabled the button until the next render, so a rapid
+    // double-click must not start duplicate git status/upstream subprocesses.
+    refreshInFlightRef.current = true
     const initialRequestKey = checksPanelAsyncResultKey(
       prCacheKey,
       branch,
@@ -1843,7 +1888,6 @@ export default function ChecksPanel(): React.JSX.Element {
     const refreshProvider = isGitLabReviewContext ? 'gitlab' : 'github'
     let refreshOutcome = 'started'
     setIsRefreshing(true)
-    setGitStatusRefreshNonce((value) => value + 1)
     recordChecksPanelPRRefreshBreadcrumb({
       event: 'start',
       provider: refreshProvider,
@@ -1857,6 +1901,81 @@ export default function ChecksPanel(): React.JSX.Element {
       refreshState: prCacheKey ? useAppStore.getState().prRefreshStates[prCacheKey] : null
     })
     try {
+      if (activeWorktreeId && activeWorktreePath && !isFolder) {
+        const snapshotIdentity = readChecksPanelRefreshGitIdentitySnapshot({
+          snapshot: gitStatusSnapshot,
+          contextKey: panelContextKey,
+          currentBranch: branch
+        })
+        if (snapshotIdentity.kind === 'changed') {
+          updateWorktreeGitIdentity(activeWorktreeId, {
+            head: snapshotIdentity.head,
+            branch: snapshotIdentity.branch
+          })
+          // Why: this click discovered a terminal branch switch. Let the
+          // branch-keyed render/effects restart instead of refreshing old PR data.
+          refreshOutcome = 'branch-changed'
+          return
+        }
+        try {
+          const statusContext = {
+            settings: ownerSettings,
+            worktreeId: activeWorktreeId,
+            worktreePath: activeWorktreePath,
+            connectionId: activeConnectionId ?? undefined
+          }
+          const status = await getRuntimeGitStatus(statusContext)
+          const observedBranch = status.branch ?? (status.head ? null : undefined)
+          updateWorktreeGitIdentity(activeWorktreeId, {
+            head: status.head,
+            branch: observedBranch
+          })
+          if (
+            observedBranch !== undefined &&
+            hasChecksPanelGitStatusBranchChanged({
+              observedBranch,
+              currentBranch: branch
+            })
+          ) {
+            // Why: this click discovered a terminal branch switch. Let the
+            // branch-keyed render/effects restart instead of refreshing old PR data.
+            refreshOutcome = 'branch-changed'
+            return
+          }
+          let freshRemoteStatus = status.upstreamStatus
+          if (activeWorktreePushTarget) {
+            freshRemoteStatus = await getRuntimeGitUpstreamStatus(
+              statusContext,
+              activeWorktreePushTarget
+            )
+          } else if (
+            !freshRemoteStatus ||
+            (freshRemoteStatus.ahead > 0 &&
+              freshRemoteStatus.behind > 0 &&
+              freshRemoteStatus.behindCommitsArePatchEquivalent === undefined)
+          ) {
+            freshRemoteStatus = await getRuntimeGitUpstreamStatus(statusContext)
+          }
+          if (
+            isCurrentRequest() &&
+            shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, panelContextKey)
+          ) {
+            // Why: the explicit Refresh click already paid for this status read;
+            // commit it so empty-state Publish/Create eligibility is fresh.
+            setGitStatusSnapshot({
+              contextKey: panelContextKey,
+              hasUncommittedChanges: status.entries.length > 0,
+              remoteStatus: freshRemoteStatus,
+              gitIdentity: {
+                head: status.head,
+                branch: observedBranch
+              }
+            })
+          }
+        } catch (error) {
+          console.warn('[ChecksPanel] pre-refresh git identity refresh failed', error)
+        }
+      }
       if (isGitLabReviewContext) {
         const refreshedReview = await refreshHostedReviewCard(fetchHostedReviewForBranch, {
           repoPath: repo.path,
@@ -2032,13 +2151,17 @@ export default function ChecksPanel(): React.JSX.Element {
         currentRequest: isCurrentRequest()
       })
       if (isCurrentRequest()) {
+        refreshInFlightRef.current = false
         setIsRefreshing(false)
       }
     }
   }, [
     repo,
     branch,
+    activeConnectionId,
     activeWorktreeId,
+    activeWorktreePath,
+    activeWorktreePushTarget,
     activeGitLabReview,
     prNumber,
     pr?.checksStatus,
@@ -2053,13 +2176,18 @@ export default function ChecksPanel(): React.JSX.Element {
     linkedBitbucketPR,
     linkedGiteaPR,
     linkedGitLabMR,
+    isFolder,
     isGitLabReviewContext,
+    gitStatusSnapshot,
+    panelContextKey,
     fetchPRForBranch,
     fetchPRChecks,
     fetchPRComments,
     fetchHostedReviewForBranch,
     expireGitHubPRRefreshState,
-    isCurrentAsyncResult
+    isCurrentAsyncResult,
+    ownerSettings,
+    updateWorktreeGitIdentity
   ])
 
   const handleEntryRefresh = useCallback(
@@ -2077,6 +2205,7 @@ export default function ChecksPanel(): React.JSX.Element {
           repoId: repo.id,
           linkedGitHubPR: linkedPR,
           fallbackGitHubPR: fallbackGitHubPRNumber,
+          currentHeadOid: activeWorktree?.head ?? null,
           linkedGitLabMR,
           linkedBitbucketPR,
           linkedAzureDevOpsPR,
@@ -2097,6 +2226,7 @@ export default function ChecksPanel(): React.JSX.Element {
     },
     [
       activeGitLabReview,
+      activeWorktree?.head,
       activeWorktreeId,
       branch,
       enqueueGitHubPRRefresh,
